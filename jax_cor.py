@@ -77,6 +77,12 @@ def update_membership(Y: jnp.ndarray, v: jnp.ndarray, fuzziness: float, distance
             U = U.at[i, k].set(1 / (sum1 + 1e-6))
     return U
 
+def sigmoid_weighting(lower_bound: float, upper_bound: float, galaxy_pair: galaxy_pair, sharpness: Optional[float] = 10) -> float:
+    distance = galaxy_pair.distance
+    sigmoid_lower_bound = 1 / (1 + jnp.exp(-sharpness * (distance - lower_bound)) + 1e-6)
+    sigmoid_upper_bound = 1 / (1 + jnp.exp(-sharpness * (upper_bound - distance)) + 1e-6)
+    return sigmoid_lower_bound * sigmoid_upper_bound
+
 class fuzzy_c_means:
     def __init__(self, c: int, m: float, Y: jnp.ndarray, distance_metric: Optional[Callable[[jnp.ndarray, jnp.ndarray], float]] = vincenty_formula):
         self.c = c
@@ -99,8 +105,52 @@ class fuzzy_c_means:
     def predict(self, Y: jnp.ndarray) -> jnp.ndarray:
         return update_membership(Y, self.v, self.m, self.distance_metric)
 
-def sigmoid_weighting(lower_bound: float, upper_bound: float, galaxy_pair: galaxy_pair, sharpness: Optional[float] = 10) -> float:
-    distance = galaxy_pair.distance
-    sigmoid_lower_bound = 1 / (1 + jnp.exp(-sharpness * (distance - lower_bound)) + 1e-6)
-    sigmoid_upper_bound = 1 / (1 + jnp.exp(-sharpness * (upper_bound - distance)) + 1e-6)
-    return sigmoid_lower_bound * sigmoid_upper_bound
+@dataclass
+class correlator_config:
+    lower_bound: float
+    upper_bound: float
+    sharpness: float
+    number_bins: int
+    verbose: Optional[bool] = False
+    fuzziness: Optional[float] = 2.0
+    max_iter: Optional[int] = 1000
+    tol: Optional[float] = 1e-6
+    distance_metric: Optional[Callable[[jnp.ndarray, jnp.ndarray], float]] = vincenty_formula
+
+class cosmic_correlator:
+    def __init__(self, galaxies: List[galaxy], number_clusters: int, config: correlator_config):
+        self.galaxies = galaxies
+        self.number_clusters = number_clusters
+
+        self.lower_bound = config.lower_bound
+        self.upper_bound = config.upper_bound
+        self.sharpness = config.sharpness
+        self.distance_metric = config.distance_metric
+        self.number_bins = config.number_bins
+        self.m = config.fuzziness
+        self.verbose = config.verbose
+        self.max_iter = config.max_iter
+        self.tol = config.tol
+
+        self.Y = jnp.array([galaxy.coord for galaxy in galaxies])
+        self.quantity_matrix = jnp.array([galaxy.quantity_matrix for galaxy in galaxies])
+        self.U = random.uniform(random.PRNGKey(0), (self.number_clusters, self.Y.shape[0]))
+        self.U = self.U / jnp.sum(self.U, axis=0)
+        self.v = random.uniform(random.PRNGKey(0), (self.number_clusters, self.Y.shape[1]))
+        self.fcm = fuzzy_c_means(self.number_clusters, self.m, self.Y, self.distance_metric)
+
+    def fcm_fit(self):
+        self.fcm.fit(self.max_iter, self.tol)
+        self.U = self.fcm.U
+        self.v = self.fcm.v
+
+config = correlator_config(lower_bound=0, upper_bound=10, sharpness=10, number_bins=10, verbose=True)
+galaxy1 = galaxy(coord=jnp.array([0, 0]), quantity_matrix=jnp.array([1, 2, 3]))
+galaxy2 = galaxy(coord=jnp.array([0, 1]), quantity_matrix=jnp.array([1, 2, 3]))
+galaxy3 = galaxy(coord=jnp.array([1, 0]), quantity_matrix=jnp.array([1, 2, 3]))
+galaxy4 = galaxy(coord=jnp.array([1, 1]), quantity_matrix=jnp.array([1, 2, 3]))
+galaxies = [galaxy1, galaxy2, galaxy3, galaxy4]
+correlator = cosmic_correlator(galaxies, 2, config)
+correlator.fcm_fit()
+print(correlator.U)
+print(correlator.v)
