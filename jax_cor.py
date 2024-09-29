@@ -99,17 +99,8 @@ class fuzzy_c_means:
     def predict(self, Y: jnp.ndarray) -> jnp.ndarray:
         return update_membership(Y, self.v, self.m, self.distance_metric)
 
-def test_fuzzy_c_means():
-    Y = jnp.array([[0, 0], [1, 1], [2, 2]])
-    fcm = fuzzy_c_means(2, 2, Y)
-    fcm.fit()
-    print(fcm.U)
-
-test_fuzzy_c_means()
-
-initial_centers = jnp.array([[0, 0], [1, 1], [2, 2]])
-updated_centers = update_centers(jnp.array([[0.1, 0.2, 0.7], [0.3, 0.4, 0.3], [0.6, 0.1, 0.3]]), jnp.array([[0, 0], [1, 1], [2, 2]]), 2)
-update_centers = update_centers(updated_centers, jnp.array([[0, 0], [1, 1], [2, 2]]), 2)
-
-initial_membership = jnp.array([[0.1, 0.2, 0.7], [0.3, 0.4, 0.3], [0.6, 0.1, 0.3]])
-updated_membership = update_membership(jnp.array([[0, 0], [1, 1], [2, 2]]), jnp.array([[0, 0], [1, 1], [2, 2]]), 2)
+def sigmoid_weighting(lower_bound: float, upper_bound: float, galaxy_pair: galaxy_pair, sharpness: Optional[float] = 10) -> float:
+    distance = galaxy_pair.distance
+    sigmoid_lower_bound = 1 / (1 + jnp.exp(-sharpness * (distance - lower_bound)) + 1e-6)
+    sigmoid_upper_bound = 1 / (1 + jnp.exp(-sharpness * (upper_bound - distance)) + 1e-6)
+    return sigmoid_lower_bound * sigmoid_upper_bound
