@@ -210,7 +210,7 @@ class cosmic_correlator:
 
 
 
-config = correlator_config(lower_bound=0, upper_bound=400, sharpness=10, number_bins=2, verbose=True)
+config = correlator_config(lower_bound=0, upper_bound=200, sharpness=10, number_bins=2, verbose=True)
 galaxy1 = galaxy(coord=jnp.array([0, 0]), quantities=jnp.array([1, 2, 3, 4]))
 galaxy2 = galaxy(coord=jnp.array([0, 1]), quantities=jnp.array([1, 2, 3, 4]))
 galaxy3 = galaxy(coord=jnp.array([1, 0]), quantities=jnp.array([1, 2, 3, 4]))
@@ -224,38 +224,9 @@ galaxy10 = galaxy(coord=jnp.array([4, 5]), quantities=jnp.array([1, 2, 3, 4]))
 
 galaxies = [galaxy1, galaxy2, galaxy3, galaxy4, galaxy5, galaxy6, galaxy7, galaxy8, galaxy9, galaxy10]
 correlator = cosmic_correlator(galaxies, 3, config)
-#correlator.fcm_fit()
-#print(correlator.U)
-#print(correlator.v)
-#print(correlator._weight_quantities())
-#print(correlator.correlate())
+correlator.fcm_fit()
+print(correlator.U)
+print(correlator.v)
+print(correlator._weight_quantities())
+print(correlator.correlate())
 
-def compute_gradient_of_correlation(correlator, galaxies):
-    # Define a version of the correlation function without integer inputs
-    def correlation_with_params(galaxy_coords: jnp.ndarray, galaxy_quantities: jnp.ndarray):
-        temp_galaxies = [galaxy(coord=galaxy_coords[i], quantities=galaxy_quantities[i]) for i in range(len(galaxy_coords))]
-        correlator.galaxies = temp_galaxies
-        correlation_result = correlator.correlate().sum()
-        # Ensure the correlation result is real for gradient computation
-        return jnp.real(correlation_result)  
-
-    # Stack the input coordinates and quantities for gradient calculation
-    galaxy_coords = jnp.stack([g.coord for g in galaxies])
-    galaxy_quantities = jnp.stack([g.quantities for g in galaxies])
-
-    # Compute the gradient of the correlation function with respect to galaxy coordinates
-    grad_correlation_coords = grad(correlation_with_params, argnums=0,allow_int=True)(galaxy_coords, galaxy_quantities)
-    grad_correlation_quantities = grad(correlation_with_params, argnums=1, allow_int=True)(galaxy_coords, galaxy_quantities)
-
-    return grad_correlation_coords, grad_correlation_quantities
-
-
-# Test the gradient computation
-correlator = cosmic_correlator(galaxies, 3, config)
-grad_coords, grad_quantities = compute_gradient_of_correlation(correlator, galaxies)
-
-print("Gradient with respect to coordinates:")
-print(grad_coords[2][1])
-
-print("Gradient with respect to quantities:")
-print(grad_quantities)
