@@ -1,8 +1,9 @@
 import jax.numpy as jnp
-from jax import grad, jit, vmap, jacfwd, jacrev
+from jax import grad, jit, vmap, jacfwd, jacrev, lax
 import jax.random as random
 from typing import List, Tuple, Optional, Callable
 from dataclasses import dataclass
+from functools import partial
 
 '''
 $Y = \left\{y_1, \hdots, y_n\right\}$ are the object positions,
@@ -16,13 +17,7 @@ $v_i = (v_{i1}, \hdots, v_{in})$, is the center of cluster $i$.
 @dataclass
 class galaxy:
     coord: jnp.ndarray
-    quantity_matrix: jnp.ndarray
-
-@dataclass
-class galaxy_pair:
-    galaxy1: galaxy
-    galaxy2: galaxy
-    distance: float
+    quantities: jnp.ndarray
 
 def vincenty_formula(coord1: jnp.ndarray, coord2: jnp.ndarray) -> float:
     phi1, lambda1 = coord1
@@ -45,6 +40,41 @@ def vincenty_formula(coord1: jnp.ndarray, coord2: jnp.ndarray) -> float:
     distance = Δσ * (180 / jnp.pi) * 60
 
     return distance
+
+def calculate_direction(x_1, x_2, y_1, y_2, z_1, z_2) -> jnp.complex64:
+    euclidean_distance_squared = (x_2 - x_1)**2 + (y_2 - y_1)**2 + (z_2 - z_1)**2
+    cosA = (z_1 - z_2) + 0.5 * z_2 * euclidean_distance_squared
+    sinA = y_1 * x_2 - x_1 * y_2
+    r = jnp.complex64(sinA + 1j * -cosA)  # Use jnp.complex128 to create a complex number
+    return r
+
+def real_and_imag(z) -> jnp.ndarray:
+    return jnp.array([jnp.real(z), jnp.imag(z)])
+
+def fuzzy_shear_estimator(galaxy1_coord: jnp.ndarray, galaxy2_coord: jnp.ndarray, galaxy_distance: float, galaxy1_quantities: jnp.ndarray, galaxy2_quantities: jnp.ndarray) -> float:
+    ra1, dec1 = galaxy1_coord
+    ra2, dec2 = galaxy2_coord
+    x1, y1, z1 = jnp.cos(ra1 * jnp.pi / 180) * jnp.cos(dec1 * jnp.pi / 180), jnp.sin(ra1 * jnp.pi / 180) * jnp.cos(dec1 * jnp.pi / 180), jnp.sin(dec1 * jnp.pi / 180)
+    x2, y2, z2 = jnp.cos(ra2 * jnp.pi / 180) * jnp.cos(dec2 * jnp.pi / 180), jnp.sin(ra2 * jnp.pi / 180) * jnp.cos(dec2 * jnp.pi / 180), jnp.sin(dec2 * jnp.pi / 180)
+
+    r21 = calculate_direction(x2, x1, y2, y1, z2, z1)
+    phi21 = jnp.real(jnp.conj(r21) * r21 / (jnp.abs(r21)**2 + 1e-6))
+
+    r12 = calculate_direction(x1, x2, y1, y2, z1, z2)
+    phi12 = jnp.real(jnp.conj(r12) * r12 / (jnp.abs(r12)**2 + 1e-6))
+
+    object_one_shear_one = jnp.array([galaxy1_quantities[0], galaxy1_quantities[1]])
+    object_one_shear_two = jnp.array([galaxy1_quantities[2], galaxy1_quantities[3]])
+    object_two_shear_one = jnp.array([galaxy2_quantities[0], galaxy2_quantities[1]])
+    object_two_shear_two = jnp.array([galaxy2_quantities[2], galaxy2_quantities[3]])
+
+    object_one_shear_one = real_and_imag(-jnp.exp(2j * phi12) * (object_one_shear_one[0] + 1j * object_one_shear_one[1]))
+    object_two_shear_two = real_and_imag(-jnp.exp(2j * phi21) * (object_two_shear_two[0] + 1j * object_two_shear_two[1]))
+    object_one_shear_two = real_and_imag(-jnp.exp(2j * phi12) * (object_one_shear_two[0] + 1j * object_one_shear_two[1]))
+    object_two_shear_one = real_and_imag(-jnp.exp(2j * phi21) * (object_two_shear_one[0] + 1j * object_two_shear_one[1]))
+
+    return jnp.dot(object_one_shear_one, object_two_shear_two) + jnp.dot(object_one_shear_two, object_two_shear_one)
+
 
 
 def update_centers(U: jnp.ndarray, Y: jnp.ndarray, fuzziness: float) -> jnp.ndarray:
@@ -77,8 +107,7 @@ def update_membership(Y: jnp.ndarray, v: jnp.ndarray, fuzziness: float, distance
             U = U.at[i, k].set(1 / (sum1 + 1e-6))
     return U
 
-def sigmoid_weighting(lower_bound: float, upper_bound: float, galaxy_pair: galaxy_pair, sharpness: Optional[float] = 10) -> float:
-    distance = galaxy_pair.distance
+def sigmoid_weighting(lower_bound: float, upper_bound: float, distance: float, sharpness: Optional[float] = 10) -> float:
     sigmoid_lower_bound = 1 / (1 + jnp.exp(-sharpness * (distance - lower_bound)) + 1e-6)
     sigmoid_upper_bound = 1 / (1 + jnp.exp(-sharpness * (upper_bound - distance)) + 1e-6)
     return sigmoid_lower_bound * sigmoid_upper_bound
@@ -112,7 +141,7 @@ class correlator_config:
     sharpness: float
     number_bins: int
     verbose: Optional[bool] = False
-    fuzziness: Optional[float] = 2.0
+    fuzziness: Optional[float] = 5.0
     max_iter: Optional[int] = 1000
     tol: Optional[float] = 1e-6
     distance_metric: Optional[Callable[[jnp.ndarray, jnp.ndarray], float]] = vincenty_formula
@@ -124,33 +153,109 @@ class cosmic_correlator:
 
         self.lower_bound = config.lower_bound
         self.upper_bound = config.upper_bound
+        self.number_bins = config.number_bins
+        self.bins = jnp.linspace(self.lower_bound, self.upper_bound, self.number_bins)
+
         self.sharpness = config.sharpness
         self.distance_metric = config.distance_metric
-        self.number_bins = config.number_bins
         self.m = config.fuzziness
         self.verbose = config.verbose
         self.max_iter = config.max_iter
         self.tol = config.tol
 
         self.Y = jnp.array([galaxy.coord for galaxy in galaxies])
-        self.quantity_matrix = jnp.array([galaxy.quantity_matrix for galaxy in galaxies])
+        self.quantity_matrix = jnp.array([galaxy.quantities for galaxy in galaxies]).T
         self.U = random.uniform(random.PRNGKey(0), (self.number_clusters, self.Y.shape[0]))
         self.U = self.U / jnp.sum(self.U, axis=0)
         self.v = random.uniform(random.PRNGKey(0), (self.number_clusters, self.Y.shape[1]))
         self.fcm = fuzzy_c_means(self.number_clusters, self.m, self.Y, self.distance_metric)
+
 
     def fcm_fit(self):
         self.fcm.fit(self.max_iter, self.tol)
         self.U = self.fcm.U
         self.v = self.fcm.v
 
-config = correlator_config(lower_bound=0, upper_bound=10, sharpness=10, number_bins=10, verbose=True)
-galaxy1 = galaxy(coord=jnp.array([0, 0]), quantity_matrix=jnp.array([1, 2, 3]))
-galaxy2 = galaxy(coord=jnp.array([0, 1]), quantity_matrix=jnp.array([1, 2, 3]))
-galaxy3 = galaxy(coord=jnp.array([1, 0]), quantity_matrix=jnp.array([1, 2, 3]))
-galaxy4 = galaxy(coord=jnp.array([1, 1]), quantity_matrix=jnp.array([1, 2, 3]))
-galaxies = [galaxy1, galaxy2, galaxy3, galaxy4]
-correlator = cosmic_correlator(galaxies, 2, config)
-correlator.fcm_fit()
-print(correlator.U)
-print(correlator.v)
+    def _weight_quantities(self):
+        q_tilde = jnp.dot(self.quantity_matrix, self.U.T)
+        q_tilde = q_tilde / jnp.sum(self.U, axis=1)
+        return q_tilde
+
+    def correlate(self) -> jnp.ndarray:
+        correlation = jnp.zeros((self.number_bins))
+        self.fcm_fit()
+        weighted_quantities = self._weight_quantities()
+        new_galaxies = [galaxy(coord=self.v[i], quantities=weighted_quantities[i]) for i in range(self.number_clusters)]
+        distances = [self.distance_metric(galaxy1.coord, galaxy2.coord) for galaxy1 in new_galaxies for galaxy2 in new_galaxies]
+        print(new_galaxies)
+        print([distances[i] for i in range(len(distances))])
+        print(len(distances))
+        for k in range(len(self.bins) - 1):
+            lower_bound = self.bins[k]
+            upper_bound = self.bins[k + 1]
+            for i, galaxy1 in enumerate(new_galaxies):
+                for j, galaxy2 in enumerate(new_galaxies):
+                    def true_fn(correlation):
+                        distance = vincenty_formula(galaxy1.coord, galaxy2.coord)
+                        weight = sigmoid_weighting(lower_bound, upper_bound, distance, sharpness=self.sharpness)
+                        shear_estimation = fuzzy_shear_estimator(galaxy1.coord, galaxy2.coord, distance, galaxy1.quantities, galaxy2.quantities)
+                        return correlation.at[k].set(correlation[k] + weight * shear_estimation)
+                
+                    def false_fn(correlation):
+                        return correlation 
+
+                    correlation = lax.cond(i < j, true_fn, false_fn, correlation)
+                
+        return correlation
+
+
+
+config = correlator_config(lower_bound=0, upper_bound=400, sharpness=10, number_bins=2, verbose=True)
+galaxy1 = galaxy(coord=jnp.array([0, 0]), quantities=jnp.array([1, 2, 3, 4]))
+galaxy2 = galaxy(coord=jnp.array([0, 1]), quantities=jnp.array([1, 2, 3, 4]))
+galaxy3 = galaxy(coord=jnp.array([1, 0]), quantities=jnp.array([1, 2, 3, 4]))
+galaxy4 = galaxy(coord=jnp.array([1, 1]), quantities=jnp.array([1, 2, 3, 4]))
+galaxy5 = galaxy(coord=jnp.array([2, 2]), quantities=jnp.array([1, 2, 3, 4]))
+galaxy6 = galaxy(coord=jnp.array([2, 3]), quantities=jnp.array([1, 2, 3, 4]))
+galaxy7 = galaxy(coord=jnp.array([3, 2]), quantities=jnp.array([1, 2, 3, 4]))
+galaxy8 = galaxy(coord=jnp.array([3, 3]), quantities=jnp.array([1, 2, 3, 4]))
+galaxy9 = galaxy(coord=jnp.array([4, 4]), quantities=jnp.array([1, 2, 3, 4]))
+galaxy10 = galaxy(coord=jnp.array([4, 5]), quantities=jnp.array([1, 2, 3, 4]))
+
+galaxies = [galaxy1, galaxy2, galaxy3, galaxy4, galaxy5, galaxy6, galaxy7, galaxy8, galaxy9, galaxy10]
+correlator = cosmic_correlator(galaxies, 3, config)
+#correlator.fcm_fit()
+#print(correlator.U)
+#print(correlator.v)
+#print(correlator._weight_quantities())
+#print(correlator.correlate())
+
+def compute_gradient_of_correlation(correlator, galaxies):
+    # Define a version of the correlation function without integer inputs
+    def correlation_with_params(galaxy_coords: jnp.ndarray, galaxy_quantities: jnp.ndarray):
+        temp_galaxies = [galaxy(coord=galaxy_coords[i], quantities=galaxy_quantities[i]) for i in range(len(galaxy_coords))]
+        correlator.galaxies = temp_galaxies
+        correlation_result = correlator.correlate().sum()
+        # Ensure the correlation result is real for gradient computation
+        return jnp.real(correlation_result)  
+
+    # Stack the input coordinates and quantities for gradient calculation
+    galaxy_coords = jnp.stack([g.coord for g in galaxies])
+    galaxy_quantities = jnp.stack([g.quantities for g in galaxies])
+
+    # Compute the gradient of the correlation function with respect to galaxy coordinates
+    grad_correlation_coords = grad(correlation_with_params, argnums=0,allow_int=True)(galaxy_coords, galaxy_quantities)
+    grad_correlation_quantities = grad(correlation_with_params, argnums=1, allow_int=True)(galaxy_coords, galaxy_quantities)
+
+    return grad_correlation_coords, grad_correlation_quantities
+
+
+# Test the gradient computation
+correlator = cosmic_correlator(galaxies, 3, config)
+grad_coords, grad_quantities = compute_gradient_of_correlation(correlator, galaxies)
+
+print("Gradient with respect to coordinates:")
+print(grad_coords[2][1])
+
+print("Gradient with respect to quantities:")
+print(grad_quantities)
