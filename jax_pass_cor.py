@@ -190,13 +190,11 @@ class cosmic_correlator:
     @jax.custom_jvp
     def correlate(self) -> jnp.ndarray:
         correlation = jnp.zeros((self.number_bins))
+        total_weight = jnp.zeros((self.number_bins))
         self.fcm_fit()
         weighted_quantities = self._weight_quantities()
         new_galaxies = [galaxy(coord=self.v[i], quantities=weighted_quantities[i]) for i in range(self.number_clusters)]
         distances = [self.distance_metric(galaxy1.coord, galaxy2.coord) for galaxy1 in new_galaxies for galaxy2 in new_galaxies]
-        print(new_galaxies)
-        print([distances[i] for i in range(len(distances))])
-        print(len(distances))
         for k in range(len(self.bins) - 1):
             lower_bound = self.bins[k]
             upper_bound = self.bins[k + 1]
@@ -205,6 +203,7 @@ class cosmic_correlator:
                     def true_fn(correlation):
                         distance = vincenty_formula(galaxy1.coord, galaxy2.coord)
                         weight = sigmoid_weighting(lower_bound, upper_bound, distance, sharpness=self.sharpness)
+                        total_weight = total_weight.at[k].set(total_weight[k] + weight)
                         shear_estimation = fuzzy_shear_estimator(galaxy1.coord, galaxy2.coord, distance, galaxy1.quantities, galaxy2.quantities)
                         return correlation.at[k].set(correlation[k] + weight * shear_estimation)
                 
@@ -212,12 +211,24 @@ class cosmic_correlator:
                         return correlation 
 
                     correlation = lax.cond(i < j, true_fn, false_fn, correlation)
+                    correlation = correlation / total_weight
+
                 
         return correlation
 
+    @correlate.defjvp
+    def correlate_jvp(primals, tangents):
+        self, = primals
+        tangent_self, = tangents
+        primal_out = self.correlate()
+        tangent_out = jnp.zeros_like(primal_out)  # Placeholder logic for the tangent computation
+
+        return primal_out, tangent_out
 
 
-config = correlator_config(lower_bound=0, upper_bound=200, sharpness=10, number_bins=2, verbose=True)
+
+
+config = correlator_config(lower_bound=0, upper_bound=200, sharpness=1, number_bins=2, verbose=True)
 galaxy1 = galaxy(coord=jnp.array([0, 0]), quantities=jnp.array([1, 2, 3, 4]))
 galaxy2 = galaxy(coord=jnp.array([0, 1]), quantities=jnp.array([1, 2, 3, 4]))
 galaxy3 = galaxy(coord=jnp.array([1, 0]), quantities=jnp.array([1, 2, 3, 4]))
