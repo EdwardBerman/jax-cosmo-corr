@@ -192,6 +192,7 @@ class cosmic_correlator:
         correlation = jnp.zeros((self.number_bins))
         total_weight = jnp.zeros((self.number_bins))
         self.fcm_fit()
+        self._set_static_assignments()
         weighted_quantities = self._weight_quantities()
         new_galaxies = [galaxy(coord=self.v[i], quantities=weighted_quantities[i]) for i in range(self.number_clusters)]
         distances = [self.distance_metric(galaxy1.coord, galaxy2.coord) for galaxy1 in new_galaxies for galaxy2 in new_galaxies]
@@ -221,6 +222,13 @@ class cosmic_correlator:
         self, = primals
         tangent_self, = tangents
         primal_out = self.correlate()
+        
+        correlation = jnp.zeros((self.number_bins))
+        total_weight = jnp.zeros((self.number_bins))
+        #self.fcm_fit()
+        #self._set_static_assignments()
+        weighted_quantities = self._weight_quantities()
+        new_galaxies = [galaxy(coord=self.v[i], quantities=weighted_quantities[i]) for i in range(self.number_clusters)]
         tangent_out = jnp.zeros_like(primal_out)  # Placeholder logic for the tangent computation
 
         return primal_out, tangent_out
