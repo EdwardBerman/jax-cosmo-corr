@@ -212,7 +212,7 @@ class cosmic_correlator:
                         return correlation 
 
                     correlation = lax.cond(i < j, true_fn, false_fn, correlation)
-                    correlation = correlation / total_weight
+            correlation = correlation / total_weight
 
                 
         return correlation
@@ -225,11 +225,31 @@ class cosmic_correlator:
         
         correlation = jnp.zeros((self.number_bins))
         total_weight = jnp.zeros((self.number_bins))
-        #self.fcm_fit()
-        #self._set_static_assignments()
         weighted_quantities = self._weight_quantities()
+        original_galaxies = self.galaxies
         new_galaxies = [galaxy(coord=self.v[i], quantities=weighted_quantities[i]) for i in range(self.number_clusters)]
-        tangent_out = jnp.zeros_like(primal_out)  # Placeholder logic for the tangent computation
+
+        def correlate_binned_galaxies(self, new_galaxies):
+            for i, galaxy1 in enumerate(new_galaxies):
+                for j, galaxy2 in enumerate(new_galaxies):
+                    def true_fn(correlation):
+                        distance = vincenty_formula(galaxy1.coord, galaxy2.coord)
+                        weight = sigmoid_weighting(self.lower_bound, self.upper_bound, distance, sharpness=self.sharpness)
+                        total_weight = total_weight.at[k].set(total_weight[k] + weight)
+                        shear_estimation = fuzzy_shear_estimator(galaxy1.coord, galaxy2.coord, distance, galaxy1.quantities, galaxy2.quantities)
+                        return correlation.at[k].set(correlation[k] + weight * shear_estimation)
+                    
+                    def false_fn(correlation):
+                        return correlation 
+
+                    correlation = lax.cond(i < j, true_fn, false_fn, correlation)
+            correlation = correlation / total_weight
+
+        shear_grad = grad(correlate_binned_galaxies)(self, new_galaxies)
+
+        for i, galaxy in enumerate(galaxies):
+            cluster_assignment = jnp.argmax(self.U[:, i])
+            tangent_out = new_galaxy_gradients[cluster_assignment]
 
         return primal_out, tangent_out
 
