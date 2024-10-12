@@ -212,7 +212,7 @@ class cosmic_correlator:
                         return correlation 
 
                     correlation = lax.cond(i < j, true_fn, false_fn, correlation)
-            correlation = correlation / total_weight
+            correlation = jnp.where(total_weight != 0, correlation / total_weight, 0)
 
                 
         return correlation
@@ -249,7 +249,7 @@ class cosmic_correlator:
 
         for i, galaxy in enumerate(galaxies):
             cluster_assignment = jnp.argmax(self.U[:, i])
-            tangent_out = new_galaxy_gradients[cluster_assignment]
+            tangent_out = shear_grad[cluster_assignment]
 
         return primal_out, tangent_out
 
