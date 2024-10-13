@@ -106,10 +106,54 @@ def update_membership(Y: jnp.ndarray, v: jnp.ndarray, fuzziness: float, distance
             U = U.at[i, k].set(1 / (sum1 + 1e-6))
     return U
 
-def sigmoid_weighting(lower_bound: float, upper_bound: float, distance: float, sharpness: Optional[float] = 10) -> float:
+def sigmoid_weighting(lower_bound: float, upper_bound: float, distance: float, sharpness: float) -> float:
     sigmoid_lower_bound = 1 / (1 + jnp.exp(-sharpness * (distance - lower_bound)) + 1e-6)
     sigmoid_upper_bound = 1 / (1 + jnp.exp(-sharpness * (upper_bound - distance)) + 1e-6)
     return sigmoid_lower_bound * sigmoid_upper_bound
+
+@jax.custom_vjp
+def correlate_fuzzy_c_means(galaxies_coords: jnp.ndarray, galaxies_quantities: jnp.ndarray, number_clusters: int, 
+                            fuzziness: float, lower_bound: float, upper_bound: float, sharpness: float, 
+                            number_bins: int, distance_metric: Optional[Callable] = vincenty_formula,
+                            max_iter: Optional[int] = 1000, tol: Optional[float] = 1e-6) -> jnp.ndarray:
+    N = galaxies_coords.shape[0]
+    U = random.uniform(random.PRNGKey(0), (number_clusters, N))
+    U = U / jnp.sum(U, axis=0)
+    
+    for _ in range(max_iter):  
+        centers = update_centers(U, galaxies_coords, fuzziness)
+        new_U = update_membership(galaxies_coords, centers, fuzziness, distance_metric)
+        if jnp.sum(jnp.abs(U - new_U)) < tol:
+            break
+        U = new_U
+
+    U_new = jnp.zeros((number_clusters, N))
+    for i in range(N):
+        cluster_assignment = jnp.argmax(U[:, i])
+        U_new = U_new.at[cluster_assignment, i].set(1)
+
+    weighted_quantities = jnp.dot(U, galaxies_quantities.T) / (jnp.sum(U, axis=1, keepdims=True) + 1e-6)
+    bins = jnp.linspace(lower_bound, upper_bound, number_bins)
+    correlation = jnp.zeros(number_bins - 1)
+    total_weight = jnp.zeros(number_bins - 1)
+    
+    for k in range(bins.shape[0] - 1):
+        lower_bound = bins[k]
+        upper_bound = bins[k + 1]
+        
+        for i in range(number_clusters):
+            for j in range(i+1, number_clusters):
+                distance = distance_metric(centers[i], centers[j])
+                weight = sigmoid_weighting(lower_bound, upper_bound, distance, sharpness)
+                
+                total_weight = total_weight.at[k].set(total_weight[k] + weight)
+                
+                shear_estimation = fuzzy_shear_estimator(centers[i], centers[j], distance, weighted_quantities[i], weighted_quantities[j])
+                correlation = correlation.at[k].set(correlation[k] + weight * shear_estimation)
+    
+    correlation = jnp.where(total_weight != 0, correlation / total_weight, 0)
+    
+    return correlation
 
 class fuzzy_c_means:
     def __init__(self, c: int, m: float, Y: jnp.ndarray, distance_metric: Optional[Callable[[jnp.ndarray, jnp.ndarray], float]] = vincenty_formula):
@@ -180,8 +224,9 @@ class cosmic_correlator:
     def _set_static_assignments(self):
         self.cluster_assignments = jnp.argmax(self.U, axis=0)
         self.U = jnp.zeros((self.number_clusters, self.Y.shape[0]))
-        for i, cluster in enumerate(self.cluster_assignments):
-            self.U = self.U.at[cluster, i].set(1)
+        for i in range(self.Y.shape[0]):
+            cluster_assignment = self.cluster_assignments[i]
+            self.U = self.U.at[cluster_assignment, i].set(1)
 
     def _weight_quantities(self):
         q_tilde = jnp.dot(self.quantity_matrix, self.U.T)
@@ -194,10 +239,17 @@ class cosmic_correlator:
         weighted_quantities = self._weight_quantities()
         new_galaxies = [galaxy(coord=self.v[i], quantities=weighted_quantities[i]) for i in range(self.number_clusters)]
         distances = [self.distance_metric(galaxy1.coord, galaxy2.coord) for galaxy1 in new_galaxies for galaxy2 in new_galaxies]
-        return new_galaxies, distances, jnp.zeros((self.number_bins)), jnp.zeros((self.number_bins)), jnp.zeros((len(self.bins) - 1))
+        sharpness = self.sharpness
+        galaxy_coords = jnp.array([galaxy.coord for galaxy in new_galaxies])
+        galaxy_quantities = jnp.array([galaxy.quantities for galaxy in new_galaxies])
+        c = self.number_clusters
+        m = self.m
+        original_galaxies = self.galaxies
+        number_bins = self.number_bins
+        return galaxy_coords, galaxy_quantities, distances, jnp.zeros((self.number_bins)), jnp.zeros((self.number_bins)), jnp.zeros((len(self.bins) - 1)), sharpness, c, m, original_galaxies, number_bins
 
     @jax.custom_jvp
-    def correlate(galaxy_coords, galaxy_quantities, distances, initial_correlation, initial_total_weight, initial_bin_array) -> jnp.ndarray:
+    def correlate(galaxy_coords, galaxy_quantities, distances, initial_correlation, initial_total_weight, initial_bin_array, sharpness, c, m, original_galaxies, number_bins) -> jnp.ndarray:
         correlation = initial_correlation
         total_weight = initial_total_weight
         for k in range(initial_bin_array.shape[0]):
@@ -207,7 +259,7 @@ class cosmic_correlator:
                 for j, galaxy2 in enumerate(galaxy_coords):
                     def true_fn(correlation):
                         distance = vincenty_formula(galaxy1, galaxy2)
-                        weight = sigmoid_weighting(lower_bound, upper_bound, distance, sharpness=self.sharpness)
+                        weight = sigmoid_weighting(lower_bound, upper_bound, distance, sharpness)
                         total_weight = total_weight.at[k].set(total_weight[k] + weight)
                         shear_estimation = fuzzy_shear_estimator(galaxy1, galaxy2, distance, galaxy_quantities[i], galaxy_quantities[j])
                         return correlation.at[k].set(correlation[k] + weight * shear_estimation)
@@ -223,14 +275,10 @@ class cosmic_correlator:
 
     @correlate.defjvp
     def correlate_jvp(primals, tangents):
-        self, = primals
-        tangent_self, = tangents
-        new_galaxies, distances, initial_correlation, initial_total_weight, initial_bin_array = self.get_correlation_inputs()
-        primal_out = self.correlate(new_galaxies, distances, initial_correlation, initial_total_weight, initial_bin_array)
-        
-        correlation = jnp.zeros((self.number_bins))
-        total_weight = jnp.zeros((self.number_bins))
-        original_galaxies = self.galaxies
+        galaxy_coords, galaxy_quantities, distances, initial_correlation, initial_total_weight, initial_bin_array, sharpness, c, m, original_galaxies, number_bins = primals
+    
+        corelation = correlate_fuzzy_c_means(original_galaxies, c, m, lower_bound, upper_bound, sharpness, number_bins, distance_metric)
+        primal_out = correlation
 
         @jax.jit
         def correlate_binned_galaxies(galaxy_coords, galaxy_quantities, lower_bound, upper_bound, sharpness):
@@ -251,8 +299,9 @@ class cosmic_correlator:
 
                     correlation = lax.cond(i < j, true_fn, false_fn, correlation)
             correlation = correlation / total_weight
-
-        shear_grad = grad(correlate_binned_galaxies)(galaxy_coords, galaxy_quantities, self.lower_bound, self.upper_bound, self.sharpness)
+        
+        lb, ub = self.lower_bound, self.upper_bound
+        shear_grad = grad(correlate_binned_galaxies)(galaxy_coords, galaxy_quantities, lb, ub, sharpness)
 
         for i, galaxy in enumerate(galaxies):
             cluster_assignment = jnp.argmax(self.U[:, i])
@@ -261,10 +310,10 @@ class cosmic_correlator:
         return primal_out, tangent_out
 
     def correlate_grad(self) -> jnp.ndarray:
-        new_galaxies, distances, initial_correlation, initial_total_weight, initial_bin_array = self.get_correlation_inputs()
-        galaxy_coords = jnp.array([galaxy.coord for galaxy in new_galaxies])
-        galaxy_quantities = jnp.array([galaxy.quantities for galaxy in new_galaxies])
-        return grad(self.correlate)(galaxy_coords, galaxy_quantities, distances, initial_correlation, initial_total_weight, initial_bin_array)
+        galaxy_coords, galaxy_quantities, distances, initial_correlation, initial_total_weight, initial_bin_array, sharpness, c, m, original_galaxies, number_bins = self.get_correlation_inputs()
+        galaxy_coords = jnp.array([g.coord for g in original_galaxies])  
+        galaxy_quantities = jnp.array([g.quantities for g in original_galaxies])
+        return grad(self.correlate)(galaxy_coords, galaxy_quantities, distances, initial_correlation, initial_total_weight, initial_bin_array, sharpness, c, m, original_galaxies, number_bins)
 
 config = correlator_config(lower_bound=0, upper_bound=200, sharpness=1, number_bins=2, verbose=True)
 galaxy1 = galaxy(coord=jnp.array([0, 0]), quantities=jnp.array([1, 2, 3, 4]))
@@ -280,6 +329,6 @@ galaxy10 = galaxy(coord=jnp.array([4, 5]), quantities=jnp.array([1, 2, 3, 4]))
 
 galaxies = [galaxy1, galaxy2, galaxy3, galaxy4, galaxy5, galaxy6, galaxy7, galaxy8, galaxy9, galaxy10]
 correlator = cosmic_correlator(galaxies, 3, config)
-#correlator.fcm_fit()
+#inputs = correlator.get_correlation_inputs()
 print(correlator.correlate_grad())
 
