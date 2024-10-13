@@ -1,10 +1,13 @@
 import jax.numpy as jnp
 import jax
+from jax import jvp
+from jax import debug
 from jax import grad, jit, vmap, jacfwd, jacrev, lax
 import jax.random as random
 from typing import List, Tuple, Optional, Callable
 from dataclasses import dataclass
 from functools import partial
+import ipdb
 
 '''
 $Y = \left\{y_1, \hdots, y_n\right\}$ are the object positions,
@@ -121,7 +124,13 @@ def sigmoid_weighting(lower_bound: float, upper_bound: float, distance: float, s
     sigmoid_upper_bound = 1 / (1 + jnp.exp(-sharpness * (upper_bound - distance)) + 1e-6)
     return sigmoid_lower_bound * sigmoid_upper_bound
 
-@jax.custom_vjp
+def gaussian_weighting(lower_bound: float, upper_bound: float, distance: float, sharpness: float = 1.0) -> float:
+    center = (lower_bound + upper_bound) / 2.0  
+    normalized_distance = (distance - center) / (upper_bound - lower_bound)  
+    gaussian = jnp.exp(-sharpness * (normalized_distance ** 2))  
+    return gaussian
+
+@jax.custom_jvp
 def correlate_fuzzy_c_means(galaxies_coords: jnp.ndarray, galaxies_quantities: jnp.ndarray, number_clusters: int, 
                             fuzziness: float, lower_bound: float, upper_bound: float, sharpness: float, 
                             number_bins: int, max_iter: Optional[int] = 1000, tol: Optional[float] = 1e-6) -> jnp.ndarray:
@@ -131,7 +140,7 @@ def correlate_fuzzy_c_means(galaxies_coords: jnp.ndarray, galaxies_quantities: j
 
     U, centers = fit(U, galaxies_coords, fuzziness, max_iter, tol)
 
-    weighted_quantities = jnp.dot(galaxies_quantities, U.T) / (jnp.sum(U, axis=1) + 1e-6)
+    weighted_quantities = jnp.dot(U, galaxies_quantities.T) / (jnp.sum(U, axis=1)[:, jnp.newaxis] + 1e-6)
     bins = jnp.linspace(lower_bound, upper_bound, number_bins)
 
     correlation = jnp.zeros(number_bins - 1)
@@ -145,7 +154,7 @@ def correlate_fuzzy_c_means(galaxies_coords: jnp.ndarray, galaxies_quantities: j
         for i in range(number_clusters):
             for j in range(i+1, number_clusters):
                 distance = vincenty_formula(centers[i], centers[j])
-                weight = sigmoid_weighting(lower_bound, upper_bound, distance, sharpness)
+                weight = gaussian_weighting(lower_bound, upper_bound, distance, sharpness)
                 
                 total_weight = total_weight.at[k].set(total_weight[k] + weight)
                 
@@ -158,15 +167,9 @@ def correlate_fuzzy_c_means(galaxies_coords: jnp.ndarray, galaxies_quantities: j
     
     return correlation
 
-def correlate_fuzzy_c_means_fwd(galaxies_coords: jnp.ndarray, galaxies_quantities: jnp.ndarray, number_clusters: int, 
-                            fuzziness: float, lower_bound: float, upper_bound: float, sharpness: float, 
-                            number_bins: int, distance_metric: Optional[Callable] = vincenty_formula,
-                            max_iter: Optional[int] = 1000, tol: Optional[float] = 1e-6) -> Tuple[jnp.ndarray, Tuple]:
-    result = correlate_fuzzy_c_means(galaxies_coords, galaxies_quantities, number_clusters, fuzziness, lower_bound, upper_bound, sharpness, number_bins, distance_metric, max_iter, tol)
-    return result, (galaxies_coords, galaxies_quantities, number_clusters, fuzziness, lower_bound, upper_bound, sharpness, number_bins, distance_metric, max_iter, tol)
-
-def correlate_fuzzy_c_means_bwd(res, grad):
-    galaxies_coords, galaxies_quantities, number_clusters, fuzziness, lower_bound, upper_bound, sharpness, number_bins, distance_metric, max_iter, tol = res
+@correlate_fuzzy_c_means.defjvp
+def correlate_fuzzy_c_means_gradient(primals, tangents):
+    galaxies_coords, galaxies_quantities, number_clusters, fuzziness, lower_bound, upper_bound, sharpness, number_bins, distance_metric, max_iter, tol = primals
     N = galaxies_coords.shape[0]
     U = random.uniform(random.PRNGKey(0), (number_clusters, N))
     U = U / jnp.sum(U, axis=0)
@@ -183,41 +186,29 @@ def correlate_fuzzy_c_means_bwd(res, grad):
         cluster_assignment = jnp.argmax(U[:, i])
         U_new = U_new.at[cluster_assignment, i].set(1)
         
-    weighted_quantities = jnp.dot(U, galaxies_quantities.T) / (jnp.sum(U, axis=1) + 1e-6)
+    weighted_quantities = jnp.dot(galaxies_quantities, U.T) / (jnp.sum(U, axis=1) + 1e-6)
     bins = jnp.linspace(lower_bound, upper_bound, number_bins)
     correlation = jnp.zeros(number_bins - 1)
     total_weight = jnp.zeros(number_bins - 1)
 
-    def correlate_centers(centers, weighted_quantities, bins, correlation, total_weight, sharpness, lower_bound, upper_bound, number_clusters):
-        bins = jax.lax.stop_gradient(bins)
-        correlation = jax.lax.stop_gradient(correlation)
-        sharpness = jax.lax.stop_gradient(sharpness)
-        lower_bound = jax.lax.stop_gradient(lower_bound)
-        upper_bound = jax.lax.stop_gradient(upper_bound)
-        number_clusters = jax.lax.stop_gradient(number_clusters)
+    galaxy_pairs = jnp.zeros((bins.shape[0] - 1, number_clusters*(number_clusters-1)//2, 5))
+    def assign_galaxy_pairs_to_bins(centers, bins, galaxy_pairs, weighted_quantities, sharpness):
         for k in range(bins.shape[0] - 1):
             lower_bound = bins[k]
             upper_bound = bins[k + 1]
 
-            for i in range(number_clusters):
-                for j in range(i+1, number_clusters):
+            for i in range(len(centers)):
+                for j in range(i+1, len(centers)):
                     distance = vincenty_formula(centers[i], centers[j])
-                    weight = sigmoid_weighting(lower_bound, upper_bound, distance, sharpness)
+                    weight = gaussian_weighting(lower_bound, upper_bound, distance, sharpness)
+                    galaxy_pairs = galaxy_pairs.at[k, i*(number_clusters-1) + j].set(jnp.array([centers[i], centers[j], weighted_quantities[i], weighted_quantities[j], weight]))
 
-                    total_weight = total_weight.at[k].set(total_weight[k] + weight)
+    galaxy_pairs = assign_galaxy_pairs_to_bins(centers, bins, galaxy_pairs, weighted_quantities, sharpness)
+    gradients = [grad(jnp.mean(fuzzy_shear_estimator(galaxy_pair[0], galaxy_pair[1], galaxy_pair[2], galaxy_pair[3])) * galaxy_pair[4]) for galaxy_pair in galaxy_pairs]
 
-                    shear_estimation = fuzzy_shear_estimator(centers[i], centers[j], weighted_quantities[i], weighted_quantities[j])
-                    correlation = correlation.at[k].set(correlation[k] + weight * shear_estimation)
+    correlation = correlate_fuzzy_c_means(galaxies_coords, galaxies_quantities, number_clusters, fuzziness, lower_bound, upper_bound, sharpness, number_bins, distance_metric, max_iter, tol)
 
-        correlation = jnp.where(total_weight != 0, correlation / total_weight, 0)
-        return correlation
-
-    grad_correlation = grad(correlate_centers, argnums=(0, 1))(centers, weighted_quantities, bins, correlation, total_weight, sharpness, lower_bound, upper_bound, distance_metric, number_clusters)
-
-    return (grad_correlation[0], grad_correlation[1], None, None, None, None, None, None, None, None, None)
-
-correlate_fuzzy_c_means.defvjp(correlate_fuzzy_c_means_fwd, correlate_fuzzy_c_means_bwd)
-
+    return correlation, (jnp.array(gradients),)
 
 galaxy1 = galaxy(coord=jnp.array([0, 0]), quantities=jnp.array([1, 2, 3, 4]))
 galaxy2 = galaxy(coord=jnp.array([0, 1]), quantities=jnp.array([1, 2, 3, 4]))
@@ -234,10 +225,6 @@ galaxies = [galaxy1, galaxy2, galaxy3, galaxy4, galaxy5, galaxy6, galaxy7, galax
 galaxies_coords = jnp.array([galaxy.coord for galaxy in galaxies])
 galaxies_quantities = jnp.array([galaxy.quantities for galaxy in galaxies]).T
 
-#correlation = correlate_fuzzy_c_means(galaxies_coords, galaxies_quantities, number_clusters=2, fuzziness=1.5, lower_bound=0, upper_bound=10, sharpness=1, number_bins=10)
-#grad_correlation = grad(correlate_fuzzy_c_means, argnums=(0, 1), allow_int=True)(galaxies_coords, galaxies_quantities, number_clusters=2, fuzziness=1.5, lower_bound=0, upper_bound=10, sharpness=1, number_bins=10)
-#config = correlator_config(lower_bound=0, upper_bound=200, sharpness=1, number_bins=2, verbose=True)
-jac_correlation = jacrev(correlate_fuzzy_c_means, argnums=(0, 1), allow_int=True)(galaxies_coords, galaxies_quantities, number_clusters=2, fuzziness=1.5, lower_bound=0, upper_bound=200, sharpness=0.005, number_bins=2)
-#print(correlation)
+jac_correlation = jacrev(correlate_fuzzy_c_means, argnums=(0, 1), allow_int=True)(galaxies_coords, galaxies_quantities, number_clusters=2, fuzziness=1.5, lower_bound=0, upper_bound=200, sharpness=0.0000005, number_bins=2)
 print(jac_correlation)
 
