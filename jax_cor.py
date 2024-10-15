@@ -211,16 +211,18 @@ class cosmic_correlator:
 
 
 config = correlator_config(lower_bound=0, upper_bound=200, sharpness=10, number_bins=2, verbose=True)
-galaxy1 = galaxy(coord=jnp.array([0, 0]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy2 = galaxy(coord=jnp.array([0, 1]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy3 = galaxy(coord=jnp.array([1, 0]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy4 = galaxy(coord=jnp.array([1, 1]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy5 = galaxy(coord=jnp.array([2, 2]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy6 = galaxy(coord=jnp.array([2, 3]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy7 = galaxy(coord=jnp.array([3, 2]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy8 = galaxy(coord=jnp.array([3, 3]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy9 = galaxy(coord=jnp.array([4, 4]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy10 = galaxy(coord=jnp.array([4, 5]), quantities=jnp.array([1, 2, 3, 4]))
+
+galaxy1 = galaxy(coord=jnp.array([0.0, 0.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy2 = galaxy(coord=jnp.array([0.0, 1.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy3 = galaxy(coord=jnp.array([1.0, 0.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy4 = galaxy(coord=jnp.array([1.0, 1.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy5 = galaxy(coord=jnp.array([2.0, 2.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy6 = galaxy(coord=jnp.array([2.0, 3.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy7 = galaxy(coord=jnp.array([3.0, 2.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy8 = galaxy(coord=jnp.array([3.0, 3.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy9 = galaxy(coord=jnp.array([4.0, 4.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy10 = galaxy(coord=jnp.array([4.0, 5.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+
 
 galaxies = [galaxy1, galaxy2, galaxy3, galaxy4, galaxy5, galaxy6, galaxy7, galaxy8, galaxy9, galaxy10]
 correlator = cosmic_correlator(galaxies, 3, config)
@@ -229,4 +231,6 @@ print(correlator.U)
 print(correlator.v)
 print(correlator._weight_quantities())
 print(correlator.correlate())
+
+print(grad(correlator.correlate)())
 

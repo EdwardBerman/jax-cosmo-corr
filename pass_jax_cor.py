@@ -167,12 +167,11 @@ def correlate_fuzzy_c_means_jvp(primals, tangents) -> Tuple[jnp.ndarray, jnp.nda
     U, v = fit(U, Y, m)
     c, N = U.shape
     new_centers = v 
-    print(quantities.shape, U.shape, "quantities, U")
-    new_quantities = jnp.dot(quantities, U.T) / jnp.sum(U, axis=1)
+    new_quantities = jnp.dot(quantities.T, U.T) / jnp.sum(U, axis=1)
 
     gradients = []
-    dcorrelation_dY = jnp.zeros_like(Y)  # shape (N, Y.shape[1])
-    dcorrelation_d_quantity = jnp.zeros_like(quantities)  # shape (c, v.shape[1])
+    dcorrelation_dY = jnp.zeros_like(Y) 
+    dcorrelation_d_quantity = jnp.zeros_like(quantities)  
     def weighted_correlation(new_center_i, new_center_j, new_quantity_i, new_quantity_j):
         distance = vincenty_formula(new_center_i, new_center_j)
         weight = sigmoid_weighting(lower_bound, upper_bound, distance, sharpness)
@@ -234,7 +233,7 @@ galaxy10 = galaxy(coord=jnp.array([4.0, 5.0]), quantities=jnp.array([1.0, 2.0, 3
 
 galaxies = [galaxy1, galaxy2, galaxy3, galaxy4, galaxy5, galaxy6, galaxy7, galaxy8, galaxy9, galaxy10]
 galaxies_coords = jnp.array([galaxy.coord for galaxy in galaxies])
-galaxies_quantities = jnp.array([galaxy.quantities for galaxy in galaxies]).T
+galaxies_quantities = jnp.array([galaxy.quantities for galaxy in galaxies])
 
 
 U_init = random.uniform(random.PRNGKey(0), (3, 10))
