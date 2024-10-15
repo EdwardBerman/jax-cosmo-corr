@@ -167,11 +167,12 @@ def correlate_fuzzy_c_means_jvp(primals, tangents) -> Tuple[jnp.ndarray, jnp.nda
     U, v = fit(U, Y, m)
     c, N = U.shape
     new_centers = v 
+    print(quantities.shape, U.shape, "quantities, U")
     new_quantities = jnp.dot(quantities, U.T) / jnp.sum(U, axis=1)
 
     gradients = []
     dcorrelation_dY = jnp.zeros_like(Y)  # shape (N, Y.shape[1])
-    dcorrelation_d_quantity = jnp.zeros_like(new_quantities)  # shape (c, v.shape[1])
+    dcorrelation_d_quantity = jnp.zeros_like(quantities)  # shape (c, v.shape[1])
     def weighted_correlation(new_center_i, new_center_j, new_quantity_i, new_quantity_j):
         distance = vincenty_formula(new_center_i, new_center_j)
         weight = sigmoid_weighting(lower_bound, upper_bound, distance, sharpness)
@@ -190,9 +191,15 @@ def correlate_fuzzy_c_means_jvp(primals, tangents) -> Tuple[jnp.ndarray, jnp.nda
                     )
                     gradients = tuple(jnp.nan_to_num(grad, nan=0.0) for grad in gradients)
                     dcorrelation_dY = dcorrelation_dY.at[i, :].add(gradients[0])
-                    dcorrelation_dY = dcorrelation_dY.at[i, :].add(gradients[1])
                     dcorrelation_d_quantity = dcorrelation_d_quantity.at[i, :].add(gradients[2])
-                    dcorrelation_d_quantity = dcorrelation_d_quantity.at[i, :].add(gradients[3])
+
+                    gradients = jax.grad(weighted_correlation, argnums=(0, 1, 2, 3))(
+                        new_centers[k], new_centers[j], new_quantities[k], new_quantities[j]
+                    )
+                    gradients = tuple(jnp.nan_to_num(grad, nan=0.0) for grad in gradients)
+                    dcorrelation_dY = dcorrelation_dY.at[i, :].add(gradients[0])
+                    dcorrelation_d_quantity = dcorrelation_d_quantity.at[i, :].add(gradients[2])
+
                     print(dcorrelation_dY, dcorrelation_d_quantity, "dcorrelation_dY, dcorrelation_d_quantity")
 
 
