@@ -147,7 +147,7 @@ def correlate_fuzzy_c_means(U, Y, quantities, m, lower_bound, upper_bound, sharp
     U, v = fit(U, Y, m)
     c, N = U.shape
     new_centers = v 
-    new_quantities = jnp.dot(quantities, U)
+    new_quantities = jnp.dot(quantities.T, U)
     correlation = 0.0
     total_weight = 0.0
 
@@ -172,45 +172,36 @@ def correlate_fuzzy_c_means_jvp(primals, tangents) -> Tuple[jnp.ndarray, jnp.nda
     gradients = []
     dcorrelation_dY = jnp.zeros_like(Y)  # shape (N, Y.shape[1])
     dcorrelation_d_quantity = jnp.zeros_like(new_quantities)  # shape (c, v.shape[1])
+    def weighted_correlation(new_center_i, new_center_j, new_quantity_i, new_quantity_j):
+        distance = vincenty_formula(new_center_i, new_center_j)
+        weight = sigmoid_weighting(lower_bound, upper_bound, distance, sharpness)
+        shear_estimate = fuzzy_shear_estimator(
+            new_center_i, new_center_j, new_quantity_i, new_quantity_j
+        )
+        return weight * shear_estimate
 
-    for i in range(c):
-        for j in range(i + 1, c):
-            def weighted_correlation(new_center_i, new_center_j, new_quantity_i, new_quantity_j):
-                distance = vincenty_formula(new_center_i, new_center_j)
-                weight = sigmoid_weighting(lower_bound, upper_bound, distance, sharpness)
-                shear_estimate = fuzzy_shear_estimator(
-                    new_center_i, new_center_j, new_quantity_i, new_quantity_j
-                )
-                return weight * shear_estimate
-
-            grads = jax.grad(weighted_correlation, argnums=(0, 1, 2, 3))(
-                new_centers[i], new_centers[j], new_quantities[i], new_quantities[j]
-            )
-            print(grads)
-
-            for galaxy_index in range(N):
-                cluster_assignment = jnp.argmax(U[:, galaxy_index])
-                if cluster_assignment == i:
-                    dcorrelation_d_quantity = dcorrelation_d_quantity.at[i].add(grads[0])
-                    dcorrelation_d_quantity = dcorrelation_d_quantity.at[j].add(grads[1])
-                elif cluster_assignment == j:
-                    dcorrelation_d_quantity = dcorrelation_d_quantity.at[i].add(grads[0])
-                    dcorrelation_d_quantity = dcorrelation_d_quantity.at[j].add(grads[1])
-
-            for galaxy_index in range(N):
-                cluster_assignment = jnp.argmax(U[:, galaxy_index])
-                if cluster_assignment == i:
-                    dcorrelation_dY = dcorrelation_dY.at[galaxy_index].add(grads[2])
-                elif cluster_assignment == j:
-                    dcorrelation_dY = dcorrelation_dY.at[galaxy_index].add(grads[3])
+    for i in range(dcorrelation_dY.shape[0]):
+        cluster_assignment = jnp.argmax(U[:, i])
+        for j in range(c):
+            for k in range(c):
+                if j < k and j == cluster_assignment:
+                    gradients = jax.grad(weighted_correlation, argnums=(0, 1, 2, 3))(
+                        new_centers[j], new_centers[k], new_quantities[j], new_quantities[k]
+                    )
+                    gradients = tuple(jnp.nan_to_num(grad, nan=0.0) for grad in gradients)
+                    dcorrelation_dY = dcorrelation_dY.at[i, :].add(gradients[0])
+                    dcorrelation_dY = dcorrelation_dY.at[i, :].add(gradients[1])
+                    dcorrelation_d_quantity = dcorrelation_d_quantity.at[i, :].add(gradients[2])
+                    dcorrelation_d_quantity = dcorrelation_d_quantity.at[i, :].add(gradients[3])
+                    print(dcorrelation_dY, dcorrelation_d_quantity, "dcorrelation_dY, dcorrelation_d_quantity")
 
 
     primals_out = correlate_fuzzy_c_means(U, Y, v, m, lower_bound, upper_bound, sharpness, number_bins)
-    print(dcorrelation_dY, dcorrelation_d_quantity, dY, dquantities)
-    print(dcorrelation_dY.shape, dcorrelation_d_quantity.shape, dY.shape, dquantities.shape, "dcorrelation_dY, dcorrelation_d_quantity, dY, dquantities")
+    #print(dcorrelation_dY, dcorrelation_d_quantity, dY, dquantities)
+    #print(dcorrelation_dY.shape, dcorrelation_d_quantity.shape, dY.shape, dquantities.shape, "dcorrelation_dY, dcorrelation_d_quantity, dY, dquantities")
     #tangents_out = (dcorrelation_dY, dcorrelation_d_quantity, dm, dlower_bound, dupper_bound, dsharpness, dnumber_bins)
     tangent_out = (
-        jnp.sum(dcorrelation_dY + dY) +
+        jnp.sum(dcorrelation_dY) +
         jnp.sum(dcorrelation_d_quantity) 
     )
     return primals_out, tangent_out
@@ -220,27 +211,27 @@ def gradient_correlate_fuzzy_c_means(U, Y, quantities, m, lower_bound, upper_bou
     U, v = fit(U, Y, m)
     c, N = U.shape
     new_centers = v 
-    new_quantities = jnp.dot(quantities, U)
+    new_quantities = jnp.dot(quantities, U.T)
     return
 
-galaxy1 = galaxy(coord=jnp.array([0, 0]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy2 = galaxy(coord=jnp.array([0, 1]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy3 = galaxy(coord=jnp.array([1, 0]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy4 = galaxy(coord=jnp.array([1, 1]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy5 = galaxy(coord=jnp.array([2, 2]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy6 = galaxy(coord=jnp.array([2, 3]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy7 = galaxy(coord=jnp.array([3, 2]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy8 = galaxy(coord=jnp.array([3, 3]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy9 = galaxy(coord=jnp.array([4, 4]), quantities=jnp.array([1, 2, 3, 4]))
-galaxy10 = galaxy(coord=jnp.array([4, 5]), quantities=jnp.array([1, 2, 3, 4]))
+galaxy1 = galaxy(coord=jnp.array([0.0, 0.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy2 = galaxy(coord=jnp.array([0.0, 1.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy3 = galaxy(coord=jnp.array([1.0, 0.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy4 = galaxy(coord=jnp.array([1.0, 1.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy5 = galaxy(coord=jnp.array([2.0, 2.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy6 = galaxy(coord=jnp.array([2.0, 3.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy7 = galaxy(coord=jnp.array([3.0, 2.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy8 = galaxy(coord=jnp.array([3.0, 3.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy9 = galaxy(coord=jnp.array([4.0, 4.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy10 = galaxy(coord=jnp.array([4.0, 5.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
 
 galaxies = [galaxy1, galaxy2, galaxy3, galaxy4, galaxy5, galaxy6, galaxy7, galaxy8, galaxy9, galaxy10]
 galaxies_coords = jnp.array([galaxy.coord for galaxy in galaxies])
 galaxies_quantities = jnp.array([galaxy.quantities for galaxy in galaxies]).T
 
 
-U_init = random.uniform(random.PRNGKey(0), (2, 10))
+U_init = random.uniform(random.PRNGKey(0), (3, 10))
 U_init = U_init / jnp.sum(U_init, axis=0)
-grad_correlation = grad(correlate_fuzzy_c_means, argnums=(0, 1), allow_int=True)(U_init, galaxies_coords, galaxies_quantities, 1.5, 0, 200, 0.0000005, 2)
+grad_correlation = grad(correlate_fuzzy_c_means, argnums=(0, 1), allow_int=True)(U_init, galaxies_coords, galaxies_quantities, 1.5, 0, 200, 1.0, 3)
 print(grad_correlation)
 
