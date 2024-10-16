@@ -132,16 +132,6 @@ def gaussian_weighting(lower_bound: float, upper_bound: float, distance: float, 
     gaussian = jnp.exp(-sharpness * (normalized_distance ** 2))  
     return gaussian
 
-'''
-
-(1) Write function to calculate the correlation within a given distance bin
-
-(2) Override the gradient using jax.jvp (knowing that our fuzzy_shear_estimator is differentiable)
-
-(3) Map to each distance bin
-
-'''
-
 @jax.custom_jvp
 def correlate_fuzzy_c_means(U, Y, quantities, m, lower_bound, upper_bound, sharpness, number_bins) -> jnp.ndarray:
     U, v = fit(U, Y, m)
@@ -174,8 +164,6 @@ def correlate_fuzzy_c_means_jvp(primals, tangents) -> Tuple[jnp.ndarray, jnp.nda
     dcorrelation_dY = jnp.zeros_like(Y) 
     dcorrelation_d_quantity = jnp.zeros_like(quantities)  
 
-    print(new_quantities.shape, "new quantities")
-
     def weighted_correlation(new_center_i, new_center_j, new_quantity_i, new_quantity_j):
         distance = vincenty_formula(new_center_i, new_center_j)
         weight = gaussian_weighting(lower_bound, upper_bound, distance, sharpness)
@@ -193,7 +181,6 @@ def correlate_fuzzy_c_means_jvp(primals, tangents) -> Tuple[jnp.ndarray, jnp.nda
                         new_centers[j], new_centers[k], new_quantities[j], new_quantities[k]
                     )
                     gradients = tuple(jnp.nan_to_num(grad, nan=0.0) for grad in gradients)
-                    print(gradients, "gradients")
                     dcorrelation_dY = dcorrelation_dY.at[i, :].add(gradients[0])
                     dcorrelation_d_quantity = dcorrelation_d_quantity.at[i, :].add(gradients[2])
                     gradients = jax.grad(weighted_correlation, argnums=(0, 1, 2, 3))(
@@ -203,17 +190,10 @@ def correlate_fuzzy_c_means_jvp(primals, tangents) -> Tuple[jnp.ndarray, jnp.nda
                     dcorrelation_dY = dcorrelation_dY.at[i, :].add(gradients[0])
                     dcorrelation_d_quantity = dcorrelation_d_quantity.at[i, :].add(gradients[2])
 
-                    print(dcorrelation_dY, dcorrelation_d_quantity, "dcorrelation_dY, dcorrelation_d_quantity")
-
 
     primals_out = correlate_fuzzy_c_means(U, Y, v, m, lower_bound, upper_bound, sharpness, number_bins)
-    #print(dcorrelation_dY, dcorrelation_d_quantity, dY, dquantities)
-    #print(dcorrelation_dY.shape, dcorrelation_d_quantity.shape, dY.shape, dquantities.shape, "dcorrelation_dY, dcorrelation_d_quantity, dY, dquantities")
-    #tangents_out = (dcorrelation_dY, dcorrelation_d_quantity, dm, dlower_bound, dupper_bound, dsharpness, dnumber_bins)
-    tangent_out = (
-        jnp.sum(dcorrelation_dY) +
-        jnp.sum(dcorrelation_d_quantity) 
-    )
+    tangent_out = jnp.sum(jnp.multiply(dcorrelation_dY, dY)) + jnp.sum(dcorrelation_d_quantity)
+    
     return primals_out, tangent_out
 
 
