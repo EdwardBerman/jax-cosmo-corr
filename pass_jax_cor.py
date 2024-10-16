@@ -192,7 +192,7 @@ def correlate_fuzzy_c_means_jvp(primals, tangents) -> Tuple[jnp.ndarray, jnp.nda
 
 
     primals_out = correlate_fuzzy_c_means(U, Y, v, m, lower_bound, upper_bound, sharpness, number_bins)
-    tangent_out = jnp.sum(jnp.multiply(dcorrelation_dY, dY)) + jnp.sum(dcorrelation_d_quantity)
+    tangent_out = jnp.sum(jnp.multiply(dcorrelation_dY, dY)) + jnp.sum(jnp.multiply(dcorrelation_d_quantity, dquantities.T + jnp.ones_like(dquantities.T)))
     
     return primals_out, tangent_out
 
@@ -222,6 +222,6 @@ galaxies_quantities = jnp.array([galaxy.quantities for galaxy in galaxies]).T
 
 U_init = random.uniform(random.PRNGKey(0), (3, 10))
 U_init = U_init / jnp.sum(U_init, axis=0)
-grad_correlation = grad(correlate_fuzzy_c_means, argnums=(0, 1), allow_int=True)(U_init, galaxies_coords, galaxies_quantities, 1.5, 0, 200, 1.0, 3)
+grad_correlation = grad(correlate_fuzzy_c_means, argnums=(1, 2), allow_int=True)(U_init, galaxies_coords, galaxies_quantities, 1.5, 0, 200, 1.0, 3)
 print(grad_correlation)
 
