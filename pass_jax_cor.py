@@ -234,20 +234,33 @@ def gravitational_ode_3d(t, state, args):
     az = -G * M * pos_z / r**3
     return jnp.array([vel_x, vel_y, vel_z, ax, ay, az])
 
-G = 1.0  
-M = 1.0  
-R = 1.0  
+import numpy as np
+import pandas as pd
 
-pos_x = R
-pos_y = 0.0
-pos_z = 0.0
+# Constants
+G = 1.0
+M = 1.0
+R = 1.0
+num_objects = 500
 
-vel_mag = jnp.sqrt(G * M / R)
-vel_x = 0.0
-vel_y = vel_mag
-vel_z = 0.0
+# Calculate velocity magnitude for uniform circular motion
+vel_mag = np.sqrt(G * M / R)
+angles = np.random.uniform(0, 2 * np.pi, num_objects)
 
-state0 = jnp.array([pos_x, pos_y, pos_z, vel_x, vel_y, vel_z])
+pos_x = R * np.cos(angles)
+pos_y = R * np.sin(angles)
+pos_z = np.zeros(num_objects)
+vel_x = -vel_mag * np.sin(angles)
+vel_y = vel_mag * np.cos(angles)
+vel_z = np.zeros(num_objects)
+
+initial_states = np.column_stack((pos_x, pos_y, pos_z, vel_x, vel_y, vel_z))
+
+noise_scale = 0.001  # 0.1%
+noise = np.random.normal(0, noise_scale, (num_objects, 3))
+noisy_velocities = initial_states[:, 3:6] * (1 + noise)
+
+initial_states[:, 3:6] = noisy_velocities
 
 t0 = 0.0
 t1 = 2 * jnp.pi * jnp.sqrt(R**3 / (G * M)) 
