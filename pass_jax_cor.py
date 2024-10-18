@@ -223,7 +223,7 @@ R = 1.0
 num_objects = 500
 
 vel_mag = jnp.sqrt(G * M / R)
-angles = random.uniform(key, shape=(num_objects,), minval=0, maxval=2 * jnp.pi)
+angles = random.uniform(key, shape=(num_objects,), minval=0, maxval=0.01*2 * jnp.pi)
 
 pos_x = R * jnp.cos(angles)
 pos_y = R * jnp.sin(angles)
@@ -257,6 +257,18 @@ final_solutions = vmap(diffrax.diffeqsolve)(
     args=args,
     saveat=diffrax.SaveAt(ts=t_eval)
 )
+
+def generate_end_positions(term, solver, t0, t1, dt0, y0, args, saveat):
+    return vmapp(diffrax.diffeqsolve)(
+        term,
+        solver,
+        t0=t0,
+        t1=t1,
+        dt0=dt0,
+        y0=y0,
+        args=args,
+        saveat=saveat
+    )
 
 print(final_solutions)
 
