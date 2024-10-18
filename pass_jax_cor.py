@@ -208,26 +208,6 @@ def gradient_correlate_fuzzy_c_means(U, Y, quantities, m, lower_bound, upper_bou
     new_quantities = jnp.dot(quantities, U.T)
     return
 
-galaxy1 = galaxy(coord=jnp.array([0.0, 0.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy2 = galaxy(coord=jnp.array([0.0, 1.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy3 = galaxy(coord=jnp.array([1.0, 0.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy4 = galaxy(coord=jnp.array([1.0, 1.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy5 = galaxy(coord=jnp.array([2.0, 2.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy6 = galaxy(coord=jnp.array([2.0, 3.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy7 = galaxy(coord=jnp.array([3.0, 2.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy8 = galaxy(coord=jnp.array([3.0, 3.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy9 = galaxy(coord=jnp.array([4.0, 4.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy10 = galaxy(coord=jnp.array([4.0, 5.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-
-galaxies = [galaxy1, galaxy2, galaxy3, galaxy4, galaxy5, galaxy6, galaxy7, galaxy8, galaxy9, galaxy10]
-galaxies_coords = jnp.array([galaxy.coord for galaxy in galaxies])
-galaxies_quantities = jnp.array([galaxy.quantities for galaxy in galaxies]).T
-
-
-U_init = random.uniform(random.PRNGKey(0), (3, 10))
-U_init = U_init / jnp.sum(U_init, axis=0)
-grad_correlation = grad(correlate_fuzzy_c_means, argnums=(1, 2), allow_int=True)(U_init, galaxies_coords, galaxies_quantities, 1.5, 0, 200, 1.0, 3)
-
 def gravitational_ode_3d(t, state, args):
     pos_x, pos_y, pos_z, vel_x, vel_y, vel_z = state
     G, M = args
@@ -257,7 +237,7 @@ initial_states = jnp.column_stack((pos_x, pos_y, pos_z, vel_x, vel_y, vel_z))
 noise_scale = 0.001  
 noise = random.normal(key, shape=(num_objects, 3)) * noise_scale
 noisy_velocities = initial_states[:, 3:6] * (1 + noise)
-initial_states[:, 3:6] = noisy_velocities
+initial_states.at[:, 3:6].set(noisy_velocities)
 
 t0 = 0.0
 t1 = 2 * jnp.pi * jnp.sqrt(R**3 / (G * M)) 
@@ -279,6 +259,26 @@ final_solutions = vmap(diffrax.diffeqsolve)(
 )
 
 print(final_solutions)
+
+galaxy1 = galaxy(coord=jnp.array([0.0, 0.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy2 = galaxy(coord=jnp.array([0.0, 1.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy3 = galaxy(coord=jnp.array([1.0, 0.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy4 = galaxy(coord=jnp.array([1.0, 1.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy5 = galaxy(coord=jnp.array([2.0, 2.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy6 = galaxy(coord=jnp.array([2.0, 3.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy7 = galaxy(coord=jnp.array([3.0, 2.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy8 = galaxy(coord=jnp.array([3.0, 3.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy9 = galaxy(coord=jnp.array([4.0, 4.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+galaxy10 = galaxy(coord=jnp.array([4.0, 5.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+
+galaxies = [galaxy1, galaxy2, galaxy3, galaxy4, galaxy5, galaxy6, galaxy7, galaxy8, galaxy9, galaxy10]
+galaxies_coords = jnp.array([galaxy.coord for galaxy in galaxies])
+galaxies_quantities = jnp.array([galaxy.quantities for galaxy in galaxies]).T
+
+
+U_init = random.uniform(random.PRNGKey(0), (3, 10))
+U_init = U_init / jnp.sum(U_init, axis=0)
+grad_correlation = grad(correlate_fuzzy_c_means, argnums=(1, 2), allow_int=True)(U_init, galaxies_coords, galaxies_quantities, 1.5, 0, 200, 1.0, 3)
 
 print(grad_correlation)
 
