@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import pandas as pd
 import diffrax
 import jax
 from jax import jvp
@@ -234,16 +235,11 @@ def gravitational_ode_3d(t, state, args):
     az = -G * M * pos_z / r**3
     return jnp.array([vel_x, vel_y, vel_z, ax, ay, az])
 
-import numpy as np
-import pandas as pd
-
-# Constants
 G = 1.0
 M = 1.0
 R = 1.0
 num_objects = 500
 
-# Calculate velocity magnitude for uniform circular motion
 vel_mag = np.sqrt(G * M / R)
 angles = np.random.uniform(0, 2 * np.pi, num_objects)
 
@@ -270,19 +266,16 @@ term = diffrax.ODETerm(gravitational_ode_3d)
 solver = diffrax.Dopri5()
 t_eval = jnp.linspace(t0, t1, 1000)
 
-solution = diffrax.diffeqsolve(
+final_solutions = vmap(diffrax.diffeqsolve)(
     term,
     solver,
     t0=t0,
     t1=t1,
     dt0=0.1,
-    y0=state0,
+    y0=initial_states,
     args=args,
     saveat=diffrax.SaveAt(ts=t_eval)
 )
-
-
-
 
 print(grad_correlation)
 
