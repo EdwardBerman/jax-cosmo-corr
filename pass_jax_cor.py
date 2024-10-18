@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from functools import partial
 import ipdb
 
+key = random.PRNGKey(0)
+
 '''
 $Y = \left\{y_1, \hdots, y_n\right\}$ are the object positions,
 $c$ is the number of clusters in $Y$; $2 \leq c < n$,
@@ -240,22 +242,21 @@ M = 1.0
 R = 1.0
 num_objects = 500
 
-vel_mag = np.sqrt(G * M / R)
-angles = np.random.uniform(0, 2 * np.pi, num_objects)
+vel_mag = jnp.sqrt(G * M / R)
+angles = random.uniform(key, shape=(num_objects,), minval=0, maxval=2 * jnp.pi)
 
-pos_x = R * np.cos(angles)
-pos_y = R * np.sin(angles)
-pos_z = np.zeros(num_objects)
-vel_x = -vel_mag * np.sin(angles)
-vel_y = vel_mag * np.cos(angles)
-vel_z = np.zeros(num_objects)
+pos_x = R * jnp.cos(angles)
+pos_y = R * jnp.sin(angles)
+pos_z = jnp.zeros(num_objects)
+vel_x = -vel_mag * jnp.sin(angles)
+vel_y = vel_mag * jnp.cos(angles)
+vel_z = jnp.zeros(num_objects)
 
-initial_states = np.column_stack((pos_x, pos_y, pos_z, vel_x, vel_y, vel_z))
+initial_states = jnp.column_stack((pos_x, pos_y, pos_z, vel_x, vel_y, vel_z))
 
-noise_scale = 0.001  # 0.1%
-noise = np.random.normal(0, noise_scale, (num_objects, 3))
+noise_scale = 0.001  
+noise = random.normal(key, shape=(num_objects, 3)) * noise_scale
 noisy_velocities = initial_states[:, 3:6] * (1 + noise)
-
 initial_states[:, 3:6] = noisy_velocities
 
 t0 = 0.0
@@ -276,6 +277,8 @@ final_solutions = vmap(diffrax.diffeqsolve)(
     args=args,
     saveat=diffrax.SaveAt(ts=t_eval)
 )
+
+print(final_solutions)
 
 print(grad_correlation)
 
