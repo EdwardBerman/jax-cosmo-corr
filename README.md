@@ -1,7 +1,7 @@
 # jax-cosmo-corr
 A JAX port of Cosmo Corr
 
-[Img](process.png)
+![image](process.png)
 
 # docs
 
