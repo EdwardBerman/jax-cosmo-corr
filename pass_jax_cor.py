@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import diffrax
 import jax
 from jax import jvp
 from jax import debug
@@ -223,5 +224,52 @@ galaxies_quantities = jnp.array([galaxy.quantities for galaxy in galaxies]).T
 U_init = random.uniform(random.PRNGKey(0), (3, 10))
 U_init = U_init / jnp.sum(U_init, axis=0)
 grad_correlation = grad(correlate_fuzzy_c_means, argnums=(1, 2), allow_int=True)(U_init, galaxies_coords, galaxies_quantities, 1.5, 0, 200, 1.0, 3)
+
+def gravitational_ode_3d(t, state, args):
+    pos_x, pos_y, pos_z, vel_x, vel_y, vel_z = state
+    G, M = args
+    r = jnp.sqrt(pos_x**2 + pos_y**2 + pos_z**2)
+    ax = -G * M * pos_x / r**3
+    ay = -G * M * pos_y / r**3
+    az = -G * M * pos_z / r**3
+    return jnp.array([vel_x, vel_y, vel_z, ax, ay, az])
+
+G = 1.0  
+M = 1.0  
+R = 1.0  
+
+pos_x = R
+pos_y = 0.0
+pos_z = 0.0
+
+vel_mag = jnp.sqrt(G * M / R)
+vel_x = 0.0
+vel_y = vel_mag
+vel_z = 0.0
+
+state0 = jnp.array([pos_x, pos_y, pos_z, vel_x, vel_y, vel_z])
+
+t0 = 0.0
+t1 = 2 * jnp.pi * jnp.sqrt(R**3 / (G * M)) 
+
+args = (G, M)
+term = diffrax.ODETerm(gravitational_ode_3d)
+solver = diffrax.Dopri5()
+t_eval = jnp.linspace(t0, t1, 1000)
+
+solution = diffrax.diffeqsolve(
+    term,
+    solver,
+    t0=t0,
+    t1=t1,
+    dt0=0.1,
+    y0=state0,
+    args=args,
+    saveat=diffrax.SaveAt(ts=t_eval)
+)
+
+
+
+
 print(grad_correlation)
 
