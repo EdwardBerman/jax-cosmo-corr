@@ -272,10 +272,20 @@ def generate_end_positions(term, solver, t0, t1, dt0, y0, args, saveat):
             y0=y0,
             args=args,
             saveat=diffrax.SaveAt(ts=t_eval)
-        )
-    return vmap(single_diffeqsolve)(y0)
+        ).ys
 
-print(final_solutions)
+    def xyz_to_ra_dec(x, y, z):
+        r = jnp.sqrt(x**2 + y**2 + z**2)
+        dec = jnp.arccos(z / r) * (180 / jnp.pi)
+        ra = jnp.arctan2(y, x) * (180 / jnp.pi)
+        return jnp.array([ra, dec])
+
+    def convert_to_ra_dec(position):
+        x, y, z = position
+        return xyz_to_ra_dec(x, y, z)
+
+    solutions = vmap(single_diffeqsolve)(y0)[:,-1,:3]
+    return vmap(convert_to_ra_dec)(solutions)
 
 galaxy1 = galaxy(coord=jnp.array([0.0, 0.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
 galaxy2 = galaxy(coord=jnp.array([0.0, 1.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
