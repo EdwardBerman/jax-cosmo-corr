@@ -247,28 +247,33 @@ term = diffrax.ODETerm(gravitational_ode_3d)
 solver = diffrax.Dopri5()
 t_eval = jnp.linspace(t0, t1, 1000)
 
-final_solutions = vmap(diffrax.diffeqsolve)(
-    term,
-    solver,
-    t0=t0,
-    t1=t1,
-    dt0=0.1,
-    y0=initial_states,
-    args=args,
-    saveat=diffrax.SaveAt(ts=t_eval)
-)
-
-def generate_end_positions(term, solver, t0, t1, dt0, y0, args, saveat):
-    return vmapp(diffrax.diffeqsolve)(
+def single_diffeqsolve(y0):
+    return diffrax.diffeqsolve(
         term,
         solver,
         t0=t0,
         t1=t1,
-        dt0=dt0,
+        dt0=0.1,
         y0=y0,
         args=args,
-        saveat=saveat
+        saveat=diffrax.SaveAt(ts=t_eval)
     )
+
+final_solutions = vmap(single_diffeqsolve)(initial_states)
+
+def generate_end_positions(term, solver, t0, t1, dt0, y0, args, saveat):
+    def single_diffeqsolve(y0):
+        return diffrax.diffeqsolve(
+            term,
+            solver,
+            t0=t0,
+            t1=t1,
+            dt0=0.1,
+            y0=y0,
+            args=args,
+            saveat=diffrax.SaveAt(ts=t_eval)
+        )
+    return vmap(single_diffeqsolve)(y0)
 
 print(final_solutions)
 
@@ -287,10 +292,10 @@ galaxies = [galaxy1, galaxy2, galaxy3, galaxy4, galaxy5, galaxy6, galaxy7, galax
 galaxies_coords = jnp.array([galaxy.coord for galaxy in galaxies])
 galaxies_quantities = jnp.array([galaxy.quantities for galaxy in galaxies]).T
 
-
+'''
 U_init = random.uniform(random.PRNGKey(0), (3, 10))
 U_init = U_init / jnp.sum(U_init, axis=0)
 grad_correlation = grad(correlate_fuzzy_c_means, argnums=(1, 2), allow_int=True)(U_init, galaxies_coords, galaxies_quantities, 1.5, 0, 200, 1.0, 3)
 
 print(grad_correlation)
-
+'''
