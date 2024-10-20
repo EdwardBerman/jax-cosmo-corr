@@ -1,10 +1,11 @@
 import jax.numpy as jnp
 import pandas as pd
 import diffrax
+from diffrax import RecursiveCheckpointAdjoint
 import jax
 from jax import jvp
 from jax import debug
-from jax import grad, jit, vmap, jacfwd, jacrev, lax
+from jax import grad, jit, vmap, jacfwd, jacrev, lax, value_and_grad
 import jax.random as random
 from typing import List, Tuple, Optional, Callable
 from dataclasses import dataclass
@@ -200,14 +201,6 @@ def correlate_fuzzy_c_means_jvp(primals, tangents) -> Tuple[jnp.ndarray, jnp.nda
     
     return primals_out, tangent_out
 
-
-def gradient_correlate_fuzzy_c_means(U, Y, quantities, m, lower_bound, upper_bound, sharpness, number_bins) -> jnp.ndarray:
-    U, v = fit(U, Y, m)
-    c, N = U.shape
-    new_centers = v 
-    new_quantities = jnp.dot(quantities, U.T)
-    return
-
 def gravitational_ode_3d(t, state, args):
     pos_x, pos_y, pos_z, vel_x, vel_y, vel_z = state
     G, M = args
@@ -247,22 +240,8 @@ term = diffrax.ODETerm(gravitational_ode_3d)
 solver = diffrax.Dopri5()
 t_eval = jnp.linspace(t0, t1, 1000)
 
-def single_diffeqsolve(y0):
-    return diffrax.diffeqsolve(
-        term,
-        solver,
-        t0=t0,
-        t1=t1,
-        dt0=0.1,
-        y0=y0,
-        args=args,
-        saveat=diffrax.SaveAt(ts=t_eval)
-    )
-
-final_solutions = vmap(single_diffeqsolve)(initial_states)
-
 def generate_end_positions(term, solver, t0, t1, dt0, y0, args, saveat):
-    def single_diffeqsolve(y0):
+    def single_diffeqsolve(y0, args):
         return diffrax.diffeqsolve(
             term,
             solver,
@@ -283,9 +262,12 @@ def generate_end_positions(term, solver, t0, t1, dt0, y0, args, saveat):
     def convert_to_ra_dec(position):
         x, y, z = position
         return xyz_to_ra_dec(x, y, z)
+    
+    expanded_args = (jnp.repeat(jnp.array(args[0]), y0.shape[0]), jnp.repeat(jnp.array(args[1]), y0.shape[0]))
 
-    solutions = vmap(single_diffeqsolve)(y0)[:,-1,:3]
+    solutions = vmap(single_diffeqsolve)(y0, expanded_args)[:,-1,:3]
     return vmap(convert_to_ra_dec)(solutions)
+
 
 galaxy1 = galaxy(coord=jnp.array([0.0, 0.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
 galaxy2 = galaxy(coord=jnp.array([0.0, 1.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
