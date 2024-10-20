@@ -277,7 +277,8 @@ def generate_correlation(U_init, galaxy_quantities, m, lower_bound, upper_bound,
     jac_pos = jacrev(generate_end_positions, argnums=6)(term, solver, t0, t1, dt0, y0, args, saveat)
     grad_correlation = grad(correlate_fuzzy_c_means, argnums=1)(U_init, end_positions, galaxy_quantities, m, lower_bound, upper_bound, sharpness, number_bins)
     print(jnp.sum(jnp.multiply(jac_pos[0], grad_correlation)))
-    return correlate_fuzzy_c_means(U_init, end_positions, galaxy_quantities, m, lower_bound, upper_bound, sharpness, number_bins)
+    #return correlate_fuzzy_c_means(U_init, end_positions, galaxy_quantities, m, lower_bound, upper_bound, sharpness, number_bins)
+    return jnp.sum(jnp.multiply(jac_pos[0], grad_correlation))
 
 def generate_initial_shears(num_objects: int) -> jnp.ndarray:
     g1_mean = -0.008332084319014985
@@ -306,7 +307,7 @@ correlations = [r'$\Delta \theta \in (0, 53.3)$', r'$\Delta \theta \in (53.3, 10
 correlation_values = [jnp.abs(a), jnp.abs(b), jnp.abs(c)]
 plt.figure(figsize=(8, 6))
 plt.bar(correlations, correlation_values, color='royalblue')
-plt.xlabel('Distance Bin', fontsize=24, fontname='Courier New')
+plt.xlabel(r'$\Delta \theta ~~[arcmin]$', fontsize=24, fontname='Courier New')
 plt.ylabel(r'$\mid \frac{d\xi}{dG} \mid$', fontsize=24, fontname='Courier New')
 plt.yscale('log')
 plt.tight_layout(pad=2)  # Add padding to the figure
