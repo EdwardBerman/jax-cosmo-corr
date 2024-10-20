@@ -11,6 +11,7 @@ from typing import List, Tuple, Optional, Callable
 from dataclasses import dataclass
 from functools import partial
 import ipdb
+import matplotlib.pyplot as plt
 
 key = random.PRNGKey(0)
 
@@ -142,6 +143,9 @@ def correlate_fuzzy_c_means(U, Y, quantities, m, lower_bound, upper_bound, sharp
     U, v = fit(U, Y, m)
     c, N = U.shape
     new_centers = v 
+    distances = [vincenty_formula(new_centers[i], new_centers[j]) for i in range(c) for j in range(c) if i < j]
+    dist_hist = plt.hist(distances, bins=10)
+    plt.savefig('dist_hist.png')
     new_quantities = jnp.dot(quantities.T, U)
     correlation = 0.0
     total_weight = 0.0
@@ -213,7 +217,7 @@ def gravitational_ode_3d(t, state, args):
 G = 1.0
 M = 1.0
 R = 1.0
-num_objects = 500
+num_objects = 20
 
 vel_mag = jnp.sqrt(G * M / R)
 angles = random.uniform(key, shape=(num_objects,), minval=0, maxval=0.01*2 * jnp.pi)
@@ -268,26 +272,62 @@ def generate_end_positions(term, solver, t0, t1, dt0, y0, args, saveat):
     solutions = vmap(single_diffeqsolve)(y0, expanded_args)[:,-1,:3]
     return vmap(convert_to_ra_dec)(solutions)
 
+def generate_correlation(U_init, galaxy_quantities, m, lower_bound, upper_bound, sharpness, number_bins, term, solver, t0, t1, dt0, y0, args, saveat):
+    end_positions = generate_end_positions(term, solver, t0, t1, dt0, y0, args, saveat)
+    jac_pos = jacrev(generate_end_positions, argnums=6)(term, solver, t0, t1, dt0, y0, args, saveat)
+    grad_correlation = grad(correlate_fuzzy_c_means, argnums=1)(U_init, end_positions, galaxy_quantities, m, lower_bound, upper_bound, sharpness, number_bins)
+    print(jnp.sum(jnp.multiply(jac_pos[0], grad_correlation)))
+    return correlate_fuzzy_c_means(U_init, end_positions, galaxy_quantities, m, lower_bound, upper_bound, sharpness, number_bins)
 
-galaxy1 = galaxy(coord=jnp.array([0.0, 0.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy2 = galaxy(coord=jnp.array([0.0, 1.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy3 = galaxy(coord=jnp.array([1.0, 0.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy4 = galaxy(coord=jnp.array([1.0, 1.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy5 = galaxy(coord=jnp.array([2.0, 2.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy6 = galaxy(coord=jnp.array([2.0, 3.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy7 = galaxy(coord=jnp.array([3.0, 2.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy8 = galaxy(coord=jnp.array([3.0, 3.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy9 = galaxy(coord=jnp.array([4.0, 4.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
-galaxy10 = galaxy(coord=jnp.array([4.0, 5.0]), quantities=jnp.array([1.0, 2.0, 3.0, 4.0]))
+def generate_initial_shears(num_objects: int) -> jnp.ndarray:
+    g1_mean = -0.008332084319014985
+    g1_std = 0.05575044621728211
+    g2_mean = 0.006664644541236104
+    g2_std = 0.0417740171183225
+    key1, key2 = random.split(key)
+    g1_samples = random.normal(key1, shape=(num_objects,)) * g1_std + g1_mean
+    g2_samples = random.normal(key2, shape=(num_objects,)) * g2_std + g2_mean
+    shears = jnp.vstack((g1_samples, g2_samples, g1_samples, -g2_samples))
+    return shears
 
-galaxies = [galaxy1, galaxy2, galaxy3, galaxy4, galaxy5, galaxy6, galaxy7, galaxy8, galaxy9, galaxy10]
-galaxies_coords = jnp.array([galaxy.coord for galaxy in galaxies])
-galaxies_quantities = jnp.array([galaxy.quantities for galaxy in galaxies]).T
+U_init = random.uniform(random.PRNGKey(0), (4, 20))
+U_init = U_init / jnp.sum(U_init, axis=0)
+
+quantities = generate_initial_shears(20)
+
+end_positions = generate_end_positions(term, solver, t0, t1, 0.1, initial_states, args, t_eval)
+
+
+a = generate_correlation(U_init, quantities, 1.5, 0, 53, 1.0, 1, term, solver, t0, t1, 0.1, initial_states, args, t_eval)
+b = generate_correlation(U_init, quantities, 1.5, 53, 106, 1.0, 1, term, solver, t0, t1, 0.1, initial_states, args, t_eval)
+c = generate_correlation(U_init, quantities, 1.5, 106, 160, 1.0, 1, term, solver, t0, t1, 0.1, initial_states, args, t_eval)
+
+correlations = [r'$\Delta \theta \in (0, 53.3)$', r'$\Delta \theta \in (53.3, 106.6)$', r'$\Delta \theta \in (106.6, 160)$']
+correlation_values = [jnp.abs(a), jnp.abs(b), jnp.abs(c)]
+plt.figure(figsize=(8, 6))
+plt.bar(correlations, correlation_values, color='royalblue')
+plt.xlabel('Distance Bin', fontsize=24, fontname='Courier New')
+plt.ylabel(r'$\mid \frac{d\xi}{dG} \mid$', fontsize=24, fontname='Courier New')
+plt.yscale('log')
+plt.tight_layout(pad=2)  # Add padding to the figure
+plt.savefig('correlation_values.png')
 
 '''
-U_init = random.uniform(random.PRNGKey(0), (3, 10))
-U_init = U_init / jnp.sum(U_init, axis=0)
-grad_correlation = grad(correlate_fuzzy_c_means, argnums=(1, 2), allow_int=True)(U_init, galaxies_coords, galaxies_quantities, 1.5, 0, 200, 1.0, 3)
+grad_position = grad(generate_correlation, argnums=13, allow_int=True)(U_init,
+                                                                       quantities,
+                                                                       1.5, 
+                                                                       0, 
+                                                                       20, 
+                                                                       1.0, 
+                                                                       1, 
+                                                                       term, 
+                                                                       solver, 
+                                                                       t0, 
+                                                                       t1, 
+                                                                       0.1, 
+                                                                       initial_states, 
+                                                                       args, 
+                                                                       t_eval)
 
-print(grad_correlation)
+print(grad_position)
 '''
